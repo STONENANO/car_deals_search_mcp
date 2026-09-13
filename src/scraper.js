@@ -1,104 +1,65 @@
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
+'use strict';
+
+const { launchBrowser, closeBrowser, newHardenedPage, loadAndExtract } = require('./browser.js');
+const { sanitizeErrorMessage } = require('./sanitize.js');
+const { CarListing, SOURCES, buildPath, toListings } = require('./listing.js');
 
 /**
- * Car listing data structure
+ * Scrapers for the supported listing sites.
+ *
+ * Two rules hold throughout this file:
+ *   1. Nothing a caller supplied is spliced into a URL unencoded.
+ *   2. Nothing a page returned leaves this file unsanitized -- every raw
+ *      extraction result goes through `toListings`.
  */
-class CarListing {
-    constructor(data) {
-        this.title = data.title || null;
-        this.price = data.price || null;
-        this.mileage = data.mileage || null;
-        this.dealerName = data.dealerName || null;
-        this.location = data.location || null;
-        this.dealRating = data.dealRating || null;
-        this.url = data.url || null;
-        this.source = data.source || null;
-        // CarFax badges
-        this.isOneOwner = data.isOneOwner || false;
-        this.noAccidents = data.noAccidents || false;
-        this.personalUse = data.personalUse || false;
-    }
-
-    format() {
-        let result = `${this.title || 'Unknown Vehicle'}`;
-        if (this.price) result += `\n  Price: ${this.price}`;
-        if (this.mileage) result += `\n  Mileage: ${this.mileage}`;
-        if (this.dealRating) result += `\n  Deal Rating: ${this.dealRating}`;
-
-        // CarFax badges
-        const badges = [];
-        if (this.isOneOwner) badges.push('1-Owner');
-        if (this.noAccidents) badges.push('No Accidents');
-        if (this.personalUse) badges.push('Personal Use');
-        if (badges.length > 0) result += `\n  CarFax: ${badges.join(' | ')}`;
-
-        if (this.dealerName) result += `\n  Dealer: ${this.dealerName}`;
-        if (this.location) result += `\n  Location: ${this.location}`;
-        if (this.source) result += `\n  Source: ${this.source}`;
-        if (this.url) result += `\n  ${this.url}`;
-        return result;
-    }
-}
 
 /**
- * Launch browser with stealth settings
+ * Run one scraper against a hardened browser, guaranteeing cleanup.
  */
-async function launchBrowser() {
-    return puppeteer.launch({
-        headless: 'new',
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
-        ]
-    });
+async function withBrowser(sourceLabel, fn) {
+    let browser;
+    try {
+        browser = await launchBrowser();
+        const page = await newHardenedPage(browser);
+        return await fn(page);
+    } catch (err) {
+        // Puppeteer messages can carry local paths; reduce before re-throwing.
+        throw new Error(`${sourceLabel} scraping failed: ${sanitizeErrorMessage(err, 'unknown error')}`);
+    } finally {
+        if (browser) await closeBrowser(browser);
+    }
 }
 
 /**
  * Scrape Cars.com for car listings
  */
 async function scrapeCarscom(params, maxResults = 20) {
-    const listings = [];
-    let browser;
-
-    try {
-        browser = await launchBrowser();
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1920, height: 1080 });
-
-        // Build URL
-        let url = 'https://www.cars.com/shopping/results/?';
-        const urlParams = new URLSearchParams();
-        urlParams.append('stock_type', 'used');
-        if (params.make) urlParams.append('makes[]', params.make.toLowerCase());
-        if (params.model) urlParams.append('models[]', `${params.make.toLowerCase()}-${params.model.toLowerCase()}`);
-        if (params.zip) urlParams.append('zip', params.zip);
-        if (params.yearMin) urlParams.append('year_min', params.yearMin);
-        if (params.yearMax) urlParams.append('year_max', params.yearMax);
-        if (params.priceMax) urlParams.append('list_price_max', params.priceMax);
-        if (params.mileageMax) urlParams.append('mileage_max', params.mileageMax);
+    return withBrowser(SOURCES.CARS_COM.label, async page => {
+        const url = new URL('shopping/results/', SOURCES.CARS_COM.base);
+        const q = url.searchParams;
+        q.set('stock_type', 'used');
+        if (params.make) q.set('makes[]', params.make.toLowerCase());
+        if (params.model) q.set('models[]', `${params.make.toLowerCase()}-${params.model.toLowerCase()}`);
+        if (params.zip) q.set('zip', params.zip);
+        if (params.yearMin) q.set('year_min', String(params.yearMin));
+        if (params.yearMax) q.set('year_max', String(params.yearMax));
+        if (params.priceMax) q.set('list_price_max', String(params.priceMax));
+        if (params.mileageMax) q.set('mileage_max', String(params.mileageMax));
 
         // CarFax history filters
-        if (params.oneOwner) urlParams.append('one_owner', 'true');
-        if (params.noAccidents) urlParams.append('no_accidents', 'true');
-        if (params.personalUse) urlParams.append('personal_use', 'true');
+        if (params.oneOwner) q.set('one_owner', 'true');
+        if (params.noAccidents) q.set('no_accidents', 'true');
+        if (params.personalUse) q.set('personal_use', 'true');
 
-        url += urlParams.toString();
-
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 5000));
-
-        // Extract listings from .vehicle-card elements
-        const rawListings = await page.evaluate(() => {
+        const rawListings = await loadAndExtract(page, url.href, () => {
+            const MAX_CARDS = 60;
+            const MAX_TEXT = 4000;
             const results = [];
-            const cards = document.querySelectorAll('.vehicle-card');
+            const cards = Array.from(document.querySelectorAll('.vehicle-card')).slice(0, MAX_CARDS);
 
             cards.forEach(card => {
-                const text = card.innerText;
-                const lines = text.split('\n').filter(l => l.trim());
+                const text = (card.innerText || '').slice(0, MAX_TEXT);
+                const lines = text.split('\n').filter(l => l.trim()).slice(0, 40);
 
                 let title = null;
                 let price = null;
@@ -145,7 +106,7 @@ async function scrapeCarscom(params, maxResults = 20) {
                 // Get dealer name - usually after reviews count
                 const dealerMatch = card.querySelector('.dealer-name');
                 if (dealerMatch) {
-                    dealerName = dealerMatch.innerText.trim();
+                    dealerName = (dealerMatch.innerText || '').trim();
                 } else {
                     // Fallback: look for line before reviews
                     for (let i = 0; i < lines.length; i++) {
@@ -172,74 +133,38 @@ async function scrapeCarscom(params, maxResults = 20) {
             });
 
             return results;
-        });
+        }, SOURCES.CARS_COM.label);
 
-        for (const item of rawListings.slice(0, maxResults)) {
-            listings.push(new CarListing({
-                title: item.title,
-                price: item.price,
-                mileage: item.mileage,
-                dealerName: item.dealerName,
-                dealRating: item.dealRating,
-                url: item.href ? `https://www.cars.com${item.href}` : null,
-                source: 'Cars.com',
-                isOneOwner: item.isOneOwner,
-                noAccidents: item.noAccidents,
-                personalUse: item.personalUse
-            }));
-        }
-
-        await browser.close();
-    } catch (err) {
-        if (browser) await browser.close();
-        throw new Error(`Cars.com scraping failed: ${err.message}`);
-    }
-
-    return listings;
+        return toListings(rawListings, maxResults, SOURCES.CARS_COM);
+    });
 }
 
 /**
  * Scrape Autotrader for car listings
  */
 async function scrapeAutotrader(params, maxResults = 20) {
-    const listings = [];
-    let browser;
-
-    try {
-        browser = await launchBrowser();
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1920, height: 1080 });
-
-        // Build URL
+    return withBrowser(SOURCES.AUTOTRADER.label, async page => {
         const make = params.make ? params.make.toLowerCase() : '';
         const model = params.model ? params.model.toLowerCase() : '';
         const zip = params.zip || '90210';
 
-        let url = `https://www.autotrader.com/cars-for-sale/all-cars`;
-        if (make) url += `/${make}`;
-        if (model) url += `/${model}`;
-        url += `/beverly-hills-ca-${zip}`;
+        const url = new URL(
+            buildPath('cars-for-sale', 'all-cars', make, model, `beverly-hills-ca-${zip}`),
+            SOURCES.AUTOTRADER.base
+        );
+        if (params.yearMin) url.searchParams.set('startYear', String(params.yearMin));
+        if (params.yearMax) url.searchParams.set('endYear', String(params.yearMax));
+        if (params.priceMax) url.searchParams.set('maxPrice', String(params.priceMax));
+        if (params.mileageMax) url.searchParams.set('maxMileage', String(params.mileageMax));
 
-        // Add query params
-        const urlParams = new URLSearchParams();
-        if (params.yearMin) urlParams.append('startYear', params.yearMin);
-        if (params.yearMax) urlParams.append('endYear', params.yearMax);
-        if (params.priceMax) urlParams.append('maxPrice', params.priceMax);
-        if (params.mileageMax) urlParams.append('maxMileage', params.mileageMax);
-
-        if (urlParams.toString()) {
-            url += '?' + urlParams.toString();
-        }
-
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 5000));
-
-        // Extract listings
-        const rawListings = await page.evaluate(() => {
+        const rawListings = await loadAndExtract(page, url.href, () => {
+            const MAX_CARDS = 60;
             const results = [];
 
             // Autotrader uses various selectors for listings
-            const cards = document.querySelectorAll('[data-cmp="inventoryListing"], .inventory-listing');
+            const cards = Array.from(
+                document.querySelectorAll('[data-cmp="inventoryListing"], .inventory-listing')
+            ).slice(0, MAX_CARDS);
 
             cards.forEach(card => {
                 const titleEl = card.querySelector('h2, .text-bold');
@@ -248,13 +173,13 @@ async function scrapeAutotrader(params, maxResults = 20) {
                 const dealerEl = card.querySelector('.dealer-name, .text-subdued');
                 const linkEl = card.querySelector('a[href*="/cars-for-sale/"]');
 
-                const title = titleEl ? titleEl.innerText.trim() : null;
-                const price = priceEl ? priceEl.innerText.trim() : null;
+                const title = titleEl ? (titleEl.innerText || '').trim() : null;
+                const price = priceEl ? (priceEl.innerText || '').trim() : null;
 
                 // Get mileage from text
                 let mileage = null;
                 if (mileageEl) {
-                    const text = mileageEl.innerText;
+                    const text = (mileageEl.innerText || '').slice(0, 500);
                     const match = text.match(/([\d,]+)\s*miles?/i);
                     if (match) mileage = match[0];
                 }
@@ -264,77 +189,49 @@ async function scrapeAutotrader(params, maxResults = 20) {
                         title,
                         price,
                         mileage,
-                        dealerName: dealerEl ? dealerEl.innerText.trim() : null,
-                        href: linkEl ? linkEl.getAttribute('href') : null
+                        dealerName: dealerEl ? (dealerEl.innerText || '').trim() : null,
+                        href: linkEl ? linkEl.getAttribute('href') : null,
                     });
                 }
             });
 
             return results;
-        });
+        }, SOURCES.AUTOTRADER.label);
 
-        for (const item of rawListings.slice(0, maxResults)) {
-            listings.push(new CarListing({
-                title: item.title,
-                price: item.price,
-                mileage: item.mileage,
-                dealerName: item.dealerName,
-                url: item.href ? `https://www.autotrader.com${item.href}` : null,
-                source: 'Autotrader'
-            }));
-        }
-
-        await browser.close();
-    } catch (err) {
-        if (browser) await browser.close();
-        throw new Error(`Autotrader scraping failed: ${err.message}`);
-    }
-
-    return listings;
+        return toListings(rawListings, maxResults, SOURCES.AUTOTRADER);
+    });
 }
 
 /**
  * Scrape KBB for car listings
  */
 async function scrapeKBB(params, maxResults = 20) {
-    const listings = [];
-    let browser;
-
-    try {
-        browser = await launchBrowser();
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1920, height: 1080 });
-
-        // Build URL
+    return withBrowser(SOURCES.KBB.label, async page => {
         const make = params.make ? params.make.toLowerCase() : '';
         const model = params.model ? params.model.toLowerCase() : '';
         const zip = params.zip || '90210';
 
-        let url = `https://www.kbb.com/cars-for-sale/all`;
-        if (make) url += `/${make}`;
-        if (model) url += `/${model}`;
-        url += `/?zip=${zip}`;
+        const url = new URL(buildPath('cars-for-sale', 'all', make, model), SOURCES.KBB.base);
+        url.searchParams.set('zip', zip);
+        if (params.yearMin) url.searchParams.set('startYear', String(params.yearMin));
+        if (params.yearMax) url.searchParams.set('endYear', String(params.yearMax));
+        if (params.priceMax) url.searchParams.set('maxPrice', String(params.priceMax));
+        if (params.mileageMax) url.searchParams.set('maxMileage', String(params.mileageMax));
 
-        // Add filters
-        if (params.yearMin) url += `&startYear=${params.yearMin}`;
-        if (params.yearMax) url += `&endYear=${params.yearMax}`;
-        if (params.priceMax) url += `&maxPrice=${params.priceMax}`;
-        if (params.mileageMax) url += `&maxMileage=${params.mileageMax}`;
-
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 5000));
-
-        // Extract listings - KBB uses inventoryListing data-cmp
-        const rawListings = await page.evaluate(() => {
+        const rawListings = await loadAndExtract(page, url.href, () => {
+            const MAX_CARDS = 60;
+            const MAX_TEXT = 4000;
             const results = [];
 
-            const cards = document.querySelectorAll('[data-cmp="inventoryListing"]');
+            const cards = Array.from(
+                document.querySelectorAll('[data-cmp="inventoryListing"]')
+            ).slice(0, MAX_CARDS);
 
             cards.forEach(card => {
-                const text = card.innerText;
+                const text = (card.innerText || '').slice(0, MAX_TEXT);
                 if (!text || text.length < 20) return;
 
-                const lines = text.split('\n').filter(l => l.trim());
+                const lines = text.split('\n').filter(l => l.trim()).slice(0, 40);
 
                 let title = null;
                 let trim = null;
@@ -359,7 +256,7 @@ async function scrapeKBB(params, maxResults = 20) {
 
                     // Price: "$XX,XXX" or just "XX,XXX" (KBB sometimes omits $)
                     const priceMatch = trimmed.match(/^\$?([\d,]+)$/);
-                    if (priceMatch && !price && parseInt(priceMatch[1].replace(/,/g, '')) > 1000) {
+                    if (priceMatch && !price && parseInt(priceMatch[1].replace(/,/g, ''), 10) > 1000) {
                         price = trimmed.startsWith('$') ? trimmed : `$${trimmed}`;
                         continue;
                     }
@@ -384,25 +281,10 @@ async function scrapeKBB(params, maxResults = 20) {
             });
 
             return results;
-        });
+        }, SOURCES.KBB.label);
 
-        for (const item of rawListings.slice(0, maxResults)) {
-            listings.push(new CarListing({
-                title: item.title,
-                price: item.price,
-                mileage: item.mileage,
-                dealRating: item.dealRating,
-                source: 'KBB'
-            }));
-        }
-
-        await browser.close();
-    } catch (err) {
-        if (browser) await browser.close();
-        throw new Error(`KBB scraping failed: ${err.message}`);
-    }
-
-    return listings;
+        return toListings(rawListings, maxResults, SOURCES.KBB);
+    });
 }
 
 /**
@@ -411,26 +293,23 @@ async function scrapeKBB(params, maxResults = 20) {
 async function searchAllSources(params, maxResultsPerSource = 10) {
     const results = {
         listings: [],
-        errors: []
+        errors: [],
     };
 
-    // Run scrapers in parallel
+    // Run scrapers in parallel (bounded by the browser semaphore).
     const scrapers = [
-        { name: 'Cars.com', fn: () => scrapeCarscom(params, maxResultsPerSource) },
-        { name: 'Autotrader', fn: () => scrapeAutotrader(params, maxResultsPerSource) },
-        { name: 'KBB', fn: () => scrapeKBB(params, maxResultsPerSource) }
+        { name: SOURCES.CARS_COM.label, fn: () => scrapeCarscom(params, maxResultsPerSource) },
+        { name: SOURCES.AUTOTRADER.label, fn: () => scrapeAutotrader(params, maxResultsPerSource) },
+        { name: SOURCES.KBB.label, fn: () => scrapeKBB(params, maxResultsPerSource) },
     ];
 
-    const promises = scrapers.map(async scraper => {
+    const outcomes = await Promise.all(scrapers.map(async scraper => {
         try {
-            const listings = await scraper.fn();
-            return { name: scraper.name, listings, error: null };
+            return { name: scraper.name, listings: await scraper.fn(), error: null };
         } catch (err) {
             return { name: scraper.name, listings: [], error: err.message };
         }
-    });
-
-    const outcomes = await Promise.all(promises);
+    }));
 
     for (const outcome of outcomes) {
         results.listings.push(...outcome.listings);
@@ -444,8 +323,11 @@ async function searchAllSources(params, maxResultsPerSource = 10) {
 
 module.exports = {
     CarListing,
+    SOURCES,
+    buildPath,
+    toListings,
     scrapeCarscom,
     scrapeAutotrader,
     scrapeKBB,
-    searchAllSources
+    searchAllSources,
 };

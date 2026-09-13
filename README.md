@@ -51,20 +51,11 @@ Configure your MCP client (Claude Desktop, VS Code, GitHub Copilot, etc.) to use
 ### Testing Standalone
 
 ```bash
-# Run the test command
+# Security boundary tests (no network, no browser required)
 npm test
 
-# Or test manually with a specific search
-node -e "
-const { scrapeCarscom } = require('./src/scraper.js');
-scrapeCarscom({
-  make: 'Toyota',
-  model: 'Camry',
-  oneOwner: true,
-  noAccidents: true,
-  personalUse: true
-}, 5).then(listings => listings.forEach(l => console.log(l.format())));
-"
+# Optional: one real Cars.com search, end to end
+npm run smoke -- Toyota Camry
 ```
 
 ---
@@ -95,15 +86,15 @@ scrapeCarscom({
 
 | Parameter    | Type     | Required | Description |
 |--------------|----------|----------|-------------|
-| `make`       | string   | ✅       | Car manufacturer (e.g., "Toyota", "Honda") |
-| `model`      | string   | ✅       | Car model (e.g., "Camry", "Accord") |
-| `zip`        | string   | ❌       | ZIP code for local search (default: "90210") |
+| `make`       | string   | ✅       | Car manufacturer, e.g. "Toyota". Letters, digits, spaces and `. + -` only; max 40 chars |
+| `model`      | string   | ✅       | Car model, e.g. "Camry". Same character rules as `make` |
+| `zip`        | string   | ❌       | 5-digit US ZIP code (default: "90210") |
 | `yearMin`    | integer  | ❌       | Minimum model year |
 | `yearMax`    | integer  | ❌       | Maximum model year |
 | `priceMax`   | integer  | ❌       | Maximum price in USD |
 | `mileageMax` | integer  | ❌       | Maximum mileage |
-| `maxResults` | integer  | ❌       | Max results per source (default: 10) |
-| `sources`    | array    | ❌       | Sources to query: `["cars.com","autotrader","kbb"]` (default: all) |
+| `maxResults` | integer  | ❌       | Max results per source (default: 10, max: 25) |
+| `sources`    | array    | ❌       | Sources to query: `["cars.com","autotrader","kbb"]` (default: `["cars.com"]`) |
 | `oneOwner`   | boolean  | ❌       | Filter for CARFAX 1-owner vehicles only |
 | `noAccidents`| boolean  | ❌       | Filter for no accidents reported |
 | `personalUse`| boolean  | ❌       | Filter for personal use only (not rental/fleet) |
@@ -125,10 +116,12 @@ scrapeCarscom({
 
 ## 🛠️ Technical Details
 
-- **Scraping**: Puppeteer (headless Chromium) with stealth plugin to bypass bot detection
-- **Concurrency**: Parallel scraper workers for simultaneous multi-source queries
+- **Scraping**: Puppeteer (headless Chromium, sandbox enabled) with stealth plugin
+- **Concurrency**: Parallel scraper workers, bounded so a burst of calls cannot exhaust the host
 - **Protocol**: Implements MCP (Model Context Protocol) for AI assistant integration
 - **Data extraction**: Source-specific parsers normalize listings into a common schema
+- **Trust boundaries**: Arguments are validated before use and scraped content is sanitized and
+  marked as untrusted before it reaches the model — see [SECURITY.md](SECURITY.md)
 
 ### Chrome/Chromium Requirement
 
@@ -146,17 +139,38 @@ export PUPPETEER_EXECUTABLE_PATH="/path/to/chrome"
 
 ---
 
+## 🔒 Security
+
+Listing text comes from third-party websites and is treated as hostile input:
+it is sanitized, markdown-escaped and wrapped in an untrusted-data envelope
+before it reaches the assistant, and scraped links are validated against the
+source site's own origin. Tool arguments are validated before they are used to
+build a URL. Chromium runs with its sandbox on.
+
+Read [SECURITY.md](SECURITY.md) for the threat model, the full list of controls,
+and the environment variables that tune them.
+
+> Listings still say whatever their sellers wrote. Treat claims inside a listing
+> as claims, not as facts or instructions.
+
+---
+
 ## 🧪 Development & Testing
 
 ```bash
-# Run tests
+# Security boundary tests — no network or browser needed
 npm test
 
-# Test individual scrapers
-node src/scraper.js
+# One real Cars.com search, end to end
+npm run smoke -- Toyota Camry
 
-# View code structure
-ls -la src/
+# Layout of the source tree
+#   src/server.js    MCP wiring, request handling, response formatting
+#   src/validate.js  argument validation (untrusted input from the model)
+#   src/scraper.js   per-site scrapers and URL construction
+#   src/browser.js   browser hardening, timeouts, concurrency limits
+#   src/listing.js   listing model and the sanitizing boundary
+#   src/sanitize.js  text, URL and error sanitizers
 ```
 
 ---

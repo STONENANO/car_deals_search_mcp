@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node -e \"const { scrapeCarscom } = require('./src/scraper.js'); scrapeCarscom({ make: 'Toyota', model: 'Camry' }, 3).then(r => r.forEach(l => console.log(l.format())))\""
+    "test": "node --test \"test/*.test.js\"",
+    "smoke": "node scripts/smoke.js",
+    "audit": "npm audit --audit-level=high"
   },
   "keywords": [
     "mcp",
@@ -22,9 +24,22 @@
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.24.3",
-    "puppeteer": "^24.32.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "puppeteer": "^25.10.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
-  }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "assets/",
+    "mcp.json",
+    "server.json",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ]
 }

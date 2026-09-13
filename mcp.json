@@ -11,35 +11,65 @@
   "license": "MIT",
   "entry": {
     "command": "node",
-    "args": ["src/server.js"]
+    "args": [
+      "src/server.js"
+    ]
   },
-  "ports": [
-    {
-      "name": "http",
-      "protocol": "http",
-      "port": 3000
-    }
-  ],
   "permissions": [
     "network",
     "filesystem"
   ],
-  "tags": ["scraper","cars","mcp","search"],
+  "tags": [
+    "scraper",
+    "cars",
+    "mcp",
+    "search"
+  ],
   "schema": {
     "tool": "search_car_deals",
     "parameters": {
-      "make": { "type": "string", "required": true },
-      "model": { "type": "string", "required": true },
-      "zip": { "type": "string" },
-      "yearMin": { "type": "integer" },
-      "yearMax": { "type": "integer" },
-      "priceMax": { "type": "integer" },
-      "mileageMax": { "type": "integer" },
-      "maxResults": { "type": "integer" },
-      "sources": { "type": "array", "items": { "type": "string" } },
-      "oneOwner": { "type": "boolean" },
-      "noAccidents": { "type": "boolean" },
-      "personalUse": { "type": "boolean" }
+      "make": {
+        "type": "string",
+        "required": true
+      },
+      "model": {
+        "type": "string",
+        "required": true
+      },
+      "zip": {
+        "type": "string"
+      },
+      "yearMin": {
+        "type": "integer"
+      },
+      "yearMax": {
+        "type": "integer"
+      },
+      "priceMax": {
+        "type": "integer"
+      },
+      "mileageMax": {
+        "type": "integer"
+      },
+      "maxResults": {
+        "type": "integer"
+      },
+      "sources": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "oneOwner": {
+        "type": "boolean"
+      },
+      "noAccidents": {
+        "type": "boolean"
+      },
+      "personalUse": {
+        "type": "boolean"
+      }
     }
-  }
+  },
+  "transport": "stdio"
 }

@@ -3,22 +3,12 @@
     "name": "car-deals-mcp",
     "description": "Search for car deals across Cars.com, Autotrader, and KBB with CarFax filters (1-Owner, No Accidents, Personal Use)",
     "vendor": {
-        "name": "Your Name",
-        "url": "https://github.com/YOUR_USERNAME"
+        "name": "SiddarthaKoppaka",
+        "url": "https://github.com/SiddarthaKoppaka"
     },
-    "sourceUrl": "https://github.com/YOUR_USERNAME/car-deals-mcp",
+    "sourceUrl": "https://github.com/SiddarthaKoppaka/car_deals_search_mcp",
     "license": "MIT",
     "runtime": "node",
-    "packages": {
-        "npm": {
-            "name": "car-deals-mcp",
-            "command": "npx",
-            "args": [
-                "-y",
-                "car-deals-mcp"
-            ]
-        }
-    },
     "tools": [
         {
             "name": "search_car_deals",
