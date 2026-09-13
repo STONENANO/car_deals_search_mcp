@@ -124,7 +124,7 @@ async function launchBrowser() {
     await browserSemaphore.acquire();
     try {
         const browser = await puppeteer.launch({
-            headless: 'new',
+            headless: true,
             args: launchArgs(),
             protocolTimeout: PROTOCOL_TIMEOUT_MS,
         });

@@ -101,6 +101,13 @@ ZIP codes) is off unless `CAR_DEALS_DEBUG=1`.
 - `puppeteer-extra-plugin-stealth` exists to evade bot detection. Keep that in
   mind against the target sites' terms of service, and note that stealth plugins
   are a frequent malware-distribution target — pin and review upgrades.
+- Dependencies carried 16 known advisories (1 critical, 12 high), including a
+  cross-client data leak in `@modelcontextprotocol/sdk` and an uninitialized
+  memory disclosure in `ws` — the socket Puppeteer speaks CDP over, which is
+  exactly the channel carrying hostile page data. Both are on paths this server
+  uses. `npm audit` is now clean; `npm run audit` re-checks at the `high`
+  threshold. The SDK floor is pinned to `^1.30.0` so a fresh install cannot
+  resolve back to a vulnerable build.
 
 ## Environment variables
 

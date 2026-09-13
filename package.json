@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test \"test/*.test.js\"",
-    "smoke": "node scripts/smoke.js"
+    "smoke": "node scripts/smoke.js",
+    "audit": "npm audit --audit-level=high"
   },
   "keywords": [
     "mcp",
@@ -23,8 +24,8 @@
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.24.3",
-    "puppeteer": "^24.32.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "puppeteer": "^25.10.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
